@@ -12,16 +12,58 @@ console.log(`PlaceNL headless client V${VERSION_NUMBER}`);
 
 const args = process.argv.slice(2);
 
-//if (args.length != 1 && !process.env.ACCESS_TOKEN) {
-//    console.error("Missing access token.")
-//    process.exit(1);
-//}
-if (args.length != 1 && !process.env.REDDIT_SESSION) {
-    console.error("Cookie reddit_session manquant.")
+if (args.length != 1 && !process.env.LOGS) {
+    console.error("Missing logs.")
     process.exit(1);
 }
 
-let redditSessionCookies = (process.env.REDDIT_SESSION || args[0]).split(';');
+const workers = ((process.env.LOGS || args[0]).split(';')).map(worker => {
+    const parts = worker.split(':');
+    return {
+        username: parts[0],
+        password: parts[1]
+    }
+});
+
+let redditSessionCookies = [];
+for (let worker of workers) {
+    const loginResponse = await fetch('https://www.reddit.com/login')
+    let cookieRaw = loginResponse.headers.raw()['set-cookie'];
+    let cookie = cookieRaw.map((entry) => {
+        const parts = entry.split(';');
+        const cookiePart = parts[0];
+        return cookiePart;
+    }).join(';');
+
+    const loginResponseText = await loginResponse.text();
+    const csrf_token = loginResponseText.match(new RegExp('csrf_token" value="(.*)"'))[1];
+
+    const data = {
+        csrf_token,
+        otp: '',
+        password: worker.password,
+        dest: 'https://www.reddit.com',
+        username: worker.username,
+    }
+    
+    const res = await fetch('https://www.reddit.com/login', { 
+        method: 'POST', 
+        body: new URLSearchParams(data),
+        headers : {
+            cookie
+        }
+     });
+
+     cookieRaw = res.headers.raw()['set-cookie'];
+     cookie = cookieRaw.map((entry) => {
+         const parts = entry.split(';');
+         const cookiePart = parts[0];
+         return cookiePart;
+     }).join(';');
+
+     redditSessionCookies.push(cookie)
+}
+
 
 var hasTokens = false;
 
@@ -180,7 +222,7 @@ async function refreshTokens() {
     for (const cookie of redditSessionCookies) {
         const response = await fetch("https://www.reddit.com/r/place/", {
             headers: {
-                cookie: `reddit_session=${cookie}`
+                cookie
             }
         });
         const responseText = await response.text()
